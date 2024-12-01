@@ -1,55 +1,70 @@
-import requests
-import json
 import os
+import asyncio
+import requests
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from dotenv import load_dotenv
+from circuit_breaker import CircuitBreaker
 
 
 load_dotenv()
-xi_api_key = os.environ.get("XI_API_KEY")
-
+XI_API_KEY = os.environ.get("XI_API_KEY")
 CHUNK_SIZE = 1024
-VOICE_ID = "ohItIVrXTBI80RrUECOD"  # ID of the voice model to use
-TEXT_TO_SPEAK = """
-(angry)What the fuck did you just say to me you imbisul
-</voice>
-"""
+OUTPUT_DIR = "audio_files"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-OUTPUT_PATH = "output.mp3"  # Path to save the output audio file
+# Bulkhead Pattern
+bulkhead_semaphore = asyncio.Semaphore(5)
 
-# Construct the URL for the Text-to-Speech API request
-tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}/stream"
+# FastAPI app
+app = FastAPI()
 
-# Set up headers for the API request, including the API key for authentication
-headers = {
-    "Accept": "application/json",
-    "xi-api-key": xi_api_key
-}
+# Circuit Breaker Instance
+circuit_breaker = CircuitBreaker()
 
-# Set up the data payload for the API request, including the text and voice settings
-data = {
-    "text": TEXT_TO_SPEAK,
-    "model_id": "eleven_multilingual_v2",
-    "voice_settings": {
-        "stability": 0,  # Lavere værdi for mere følelsesmæssig variation
-        "similarity_boost": 0,  # Lidt lavere for mere frihed i udtrykket
-        "style": 1,
-        "use_speaker_boost": True
+# Input model
+class TTSRequest(BaseModel):
+    text: str
+    voice_id: str = "ohItIVrXTBI80RrUECOD"  # Default voice ID
 
+# Eleven Labs TTS Function
+def eleven_labs_tts(text, voice_id):
+    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+    headers = {
+        "Accept": "application/json",
+        "xi-api-key": XI_API_KEY
     }
-}
+    data = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75,
+            "style": 1,
+            "use_speaker_boost": True
+        }
+    }
 
-# Make the POST request to the TTS API with headers and data, enabling streaming response
-response = requests.post(tts_url, headers=headers, json=data, stream=True)
+    audio_file_name = f"{hash(text)}.mp3"
+    audio_file_path = os.path.join(OUTPUT_DIR, audio_file_name)
 
-# Check if the request was successful
-if response.ok:
-    # Open the output file in write-binary mode
-    with open(OUTPUT_PATH, "wb") as f:
-        # Read the response in chunks and write to the file
-        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-            f.write(chunk)
-    # Inform the user of success
-    print("Audio stream saved successfully.")
-else:
-    # Print the error message if the request was not successful
-    print(response.text)
+    response = requests.post(tts_url, headers=headers, json=data, stream=True)
+
+    if response.ok:
+        with open(audio_file_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                f.write(chunk)
+        return audio_file_path
+    else:
+        raise Exception(f"Error from TTS service: {response.text}")
+
+# TTS Endpoint
+@app.post("/tts")
+async def generate_tts(request: TTSRequest):
+    async with bulkhead_semaphore:  # Bulkhead to limit concurrent calls
+        try:
+            # Call TTS function through Circuit Breaker
+            audio_path = circuit_breaker.call(eleven_labs_tts, request.text, request.voice_id)
+            return {"audio_url": f"/{audio_path}"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
