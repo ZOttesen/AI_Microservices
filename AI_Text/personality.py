@@ -2,11 +2,11 @@ from enum import Enum
 
 
 class PersonalityType(str, Enum):
-    FRIENDLY = "friendly"
-    SARCASTIC = "sarcastic"
-    FORMAL = "formal"
-    NAPOLEON = "napoleon"
-    SHAKESPEARE = "shakespeare"
+    FRIENDLY = "Friendly"
+    SARCASTIC = "Sarcastic"
+    FORMAL = "Formal"
+    NAPOLEON = "Napoleon"
+    SHAKESPEARE = "Shakespeare"
 
 
 class Personality:

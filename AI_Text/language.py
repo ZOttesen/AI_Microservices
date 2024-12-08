@@ -2,8 +2,8 @@ from enum import Enum
 
 
 class LanguageChoice(str, Enum):
-    ENGLISH = "english"
-    DANISH = "danish"
+    ENGLISH = "English"
+    DANISH = "Danish"
 
 
 class Language:

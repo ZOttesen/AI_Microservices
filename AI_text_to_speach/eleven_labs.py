@@ -5,8 +5,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from circuit_breaker import CircuitBreaker
+from pathlib import Path  # Til håndtering af filnavne
 
-
+# Load environment variables
 load_dotenv()
 XI_API_KEY = os.environ.get("XI_API_KEY")
 CHUNK_SIZE = 1024

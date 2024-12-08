@@ -1,6 +1,6 @@
+import openai  # Importer openai direkte
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from personality import Personality, PersonalityType
@@ -9,24 +9,26 @@ from assignemt import Assignment
 from circuit_breaker import CircuitBreaker
 import asyncio
 
+# Load miljøvariabler fra .env-fil
 load_dotenv()
+
+# Indstil API-nøglen fra miljøvariablerne
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialisering af klasser
 personality = Personality()
 language = Language()
 assignment = Assignment()
 circuit_breaker = CircuitBreaker()
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
-)
-
+# Opret FastAPI-applikationen
 app = FastAPI()
 
+# Begræns samtidige anmodninger
 bulkhead_semaphore = asyncio.Semaphore(5)
-
 
 class ChatRequest(BaseModel):
     user_input: str
-
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
@@ -40,13 +42,14 @@ async def chat(request: ChatRequest):
 
     async with bulkhead_semaphore:
         try:
+            # Foretag et API-kald til OpenAI
             chat_completion = circuit_breaker.call(
-                client.chat.completions.create,
-                model="gpt-4o-mini",
+                openai.ChatCompletion.create,  # Brug korrekt metode fra OpenAI SDK
+                model="gpt-4",  # Brug en gyldig model
                 messages=initial_messages
             )
 
-            response_message = chat_completion.choices[0].message.content
+            response_message = chat_completion["choices"][0]["message"]["content"]
 
             initial_messages.append({"role": "assistant", "content": response_message})
 

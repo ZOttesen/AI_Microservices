@@ -1,49 +1,49 @@
+import os
 import json
 import requests
 import pika
 
-RABBITMQ_HOST = "localhost"
-QUEUE_NAME = "request_queue"
-RABBITMQ_USER = 'user'
-RABBITMQ_PASSWORD = 'password'
+# Load environment variables
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "user")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "password")
+RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", 5672)
+QUEUE_NAME = os.getenv("RABBITMQ_QUEUE", "request_queue")
+TEXT_GENERATOR_URL = os.getenv("TEXT_GENERATOR_URL", "http://localhost:7000/chat")
+TTS_SERVICE_URL = os.getenv("TTS_SERVICE_URL", "http://localhost:7001/tts")
 
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(
         host=RABBITMQ_HOST,
-        credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+        port=RABBITMQ_PORT,
+        credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD),
     )
 )
 
 channel = connection.channel()
-
 channel.queue_declare(queue=QUEUE_NAME)
-
 
 def call_text_generator_service(user_input):
     try:
-        response = requests.post(
-            "http://127.0.0.1:8000/chat",  # Text Generator service endpoint
-            json={"user_input": user_input},
-            timeout=10  # Timeout for HTTP-kald
-        )
+        response = requests.post(TEXT_GENERATOR_URL, json={"user_input": user_input}, timeout=10)
         if response.status_code == 200:
-            return response.json().get("response")  # Returnerer svaret fra Text Generator
+            return response.json().get("response")
         else:
             return {"error": f"Text Generator failed with status {response.status_code}"}
-
     except requests.RequestException as e:
         print(f"Error in Text Generator service: {e}")
         return {"error": "Service unavailable"}
 
-
 def call_tts_service(text):
-    tts_url = "http://localhost:8001/tts"
-    response = requests.post(tts_url, json={"text": text})
-    if response.status_code == 200:
-        return response.json().get("audio_url")
-    else:
-        raise Exception(f"TTS service error: {response.text}")
-
+    try:
+        response = requests.post(TTS_SERVICE_URL, json={"text": text})
+        if response.status_code == 200:
+            return response.json().get("audio_url")
+        else:
+            raise Exception(f"TTS service error: {response.text}")
+    except requests.RequestException as e:
+        print(f"Error in TTS service: {e}")
+        return {"error": "Service unavailable"}
 
 def on_message_callback(ch, method, properties, body):
     if not properties.reply_to or not properties.correlation_id:
