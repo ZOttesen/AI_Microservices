@@ -36,6 +36,14 @@ class Personality:
                 "You will also make frequent references to your own works and the time period in which you lived."
             )
         }
+        self.current_personality = None
 
-    def get_personality(self, personality_type: PersonalityType) -> str:
-        return self.personalities.get(personality_type, "Personality not found.")
+    def set_personality(self, personality_type: PersonalityType):
+            if personality_type not in self.personalities:
+                raise ValueError(f"Invalid personality type: {personality_type}")
+            self.current_personality = personality_type
+
+    def get_personality(self) -> str:
+        if not self.current_personality:
+            return "No personality set."
+        return self.personalities[self.current_personality]

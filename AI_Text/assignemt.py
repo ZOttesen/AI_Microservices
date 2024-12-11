@@ -3,7 +3,7 @@ class Assignment:
     def __init__(self):
         pass
 
-    def questionaire(self):
+    def questionnaire(self):
         return(
             "Your job is to generate a question for the user to answer. "
             "The question should be able to be answered at a maximum of a few words. "

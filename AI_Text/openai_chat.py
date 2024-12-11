@@ -27,31 +27,40 @@ app = FastAPI()
 # Begræns samtidige anmodninger
 bulkhead_semaphore = asyncio.Semaphore(5)
 
+class Preferences(BaseModel):
+    personality: PersonalityType
+    language: LanguageChoice
+
 class ChatRequest(BaseModel):
-    user_input: str
+    category: str
+    points: int
+    preferences: Preferences
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
+    try:
+        # Sæt personlighed og sprog baseret på input
+        personality.set_personality(request.preferences.personality)
+        language.set_language(request.preferences.language)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Generer initiale beskeder baseret på kategori og point
     initial_messages = [
-        {"role": "system",
-         "content": personality.get_personality(
-             PersonalityType.NAPOLEON) + assignment.questionaire() + assignment.answer() + language.get_language(
-             LanguageChoice.ENGLISH)},
-        {"role": "user", "content": request.user_input}
+        {"role": "system", "content": personality.get_personality() + assignment.questionnaire() + assignment.answer() + language.get_language()},
+        {"role": "user", "content": request.category + str(request.points)}
     ]
 
     async with bulkhead_semaphore:
         try:
             # Foretag et API-kald til OpenAI
             chat_completion = circuit_breaker.call(
-                openai.ChatCompletion.create,  # Brug korrekt metode fra OpenAI SDK
-                model="gpt-4",  # Brug en gyldig model
+                openai.ChatCompletion.create,
+                model="gpt-4o-mini",
                 messages=initial_messages
             )
 
             response_message = chat_completion["choices"][0]["message"]["content"]
-
-            initial_messages.append({"role": "assistant", "content": response_message})
 
             return {"response": response_message}
 

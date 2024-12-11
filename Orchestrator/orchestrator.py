@@ -2,16 +2,19 @@ import os
 import json
 import requests
 import pika
+from personality import PersonalityType  # Import PersonalityType
+from language import LanguageChoice  # Import LanguageChoice
 
 # Load environment variables
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "user")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "password")
-RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", 5672)
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
 QUEUE_NAME = os.getenv("RABBITMQ_QUEUE", "request_queue")
 TEXT_GENERATOR_URL = os.getenv("TEXT_GENERATOR_URL", "http://localhost:7000/chat")
 TTS_SERVICE_URL = os.getenv("TTS_SERVICE_URL", "http://localhost:7001/tts")
 
+# RabbitMQ connection setup
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(
         host=RABBITMQ_HOST,
@@ -19,13 +22,23 @@ connection = pika.BlockingConnection(
         credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD),
     )
 )
-
 channel = connection.channel()
 channel.queue_declare(queue=QUEUE_NAME)
 
-def call_text_generator_service(user_input):
+
+def call_text_generator_service(category, points, preferences):
     try:
-        response = requests.post(TEXT_GENERATOR_URL, json={"user_input": user_input}, timeout=10)
+        payload = {
+            "category": category,
+            "points": points,
+            "preferences": {
+                "personality": preferences["personality"].value,
+                "language": preferences["language"].value
+            }
+        }
+        print(f"Sending payload to Text Generator: {json.dumps(payload, indent=2)}")
+
+        response = requests.post(TEXT_GENERATOR_URL, json=payload, timeout=60)
         if response.status_code == 200:
             return response.json().get("response")
         else:
@@ -33,6 +46,8 @@ def call_text_generator_service(user_input):
     except requests.RequestException as e:
         print(f"Error in Text Generator service: {e}")
         return {"error": "Service unavailable"}
+
+
 
 def call_tts_service(text):
     try:
@@ -45,6 +60,7 @@ def call_tts_service(text):
         print(f"Error in TTS service: {e}")
         return {"error": "Service unavailable"}
 
+
 def on_message_callback(ch, method, properties, body):
     if not properties.reply_to or not properties.correlation_id:
         ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -52,20 +68,46 @@ def on_message_callback(ch, method, properties, body):
         return
 
     try:
-        # Parse besked fra RabbitMQ
+        # Parse message from RabbitMQ
         message = json.loads(body)
-        user_input = message.get("text")
+        category = message.get("category")
+        points = message.get("points")
+        preferences = message.get("preferences", {})
+        personality_type = preferences.get("personality", "Friendly")
+        language_choice = preferences.get("language", "English")
 
-        if not user_input:
+        if not category or points is None:
+            print("Invalid message: Missing 'category' or 'points'")
             ch.basic_ack(delivery_tag=method.delivery_tag)
-            print("Invalid message received, missing 'text'")
             return
 
-        # Trin 1: Kald Text Generator service
-        print("Calling Text Generator service...")
-        text_response = call_text_generator_service(user_input)
+        # Validate and convert personality and language to enums
+        try:
+            personality_enum = PersonalityType[personality_type.upper()]
+            language_enum = LanguageChoice[language_choice.upper()]
+        except KeyError as e:
+            print(f"Invalid personality or language in preferences: {e}")
+            reply_message = json.dumps({"error": "Invalid personality or language"})
+            ch.basic_publish(
+                exchange="",
+                routing_key=properties.reply_to,
+                properties=pika.BasicProperties(correlation_id=properties.correlation_id),
+                body=reply_message
+            )
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
-        # Hvis Text Generator fejler, returner en fejlbesked
+        # Forbered preferences som dictionary
+        preferences = {
+            "personality": personality_enum,
+            "language": language_enum
+        }
+
+        # Kald Text Generator Service med den nye struktur
+        print(f"Calling Text Generator service with category: {category}, points: {points}, preferences: {preferences}")
+        text_response = call_text_generator_service(category, points, preferences)
+
+        # Handle Text Generator errors
         if isinstance(text_response, dict) and "error" in text_response:
             reply_message = json.dumps({"error": text_response["error"]})
             ch.basic_publish(
@@ -77,12 +119,11 @@ def on_message_callback(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        # Trin 2: Send teksten til TTS-tjenesten
+        # Call TTS service
         print("Calling TTS service...")
         try:
             tts_response = call_tts_service(text_response)
 
-            # Hvis TTS fejler, returner en fejlbesked
             if isinstance(tts_response, dict) and "error" in tts_response:
                 reply_message = json.dumps({"error": tts_response["error"]})
                 ch.basic_publish(
@@ -106,10 +147,10 @@ def on_message_callback(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        # Trin 3: Returnér både tekst og lyd-URL som svar
+        # Return both text and audio URL as response
         reply_message = json.dumps({
-            "text": text_response,  # Teksten fra Text Generator
-            "audio_url": tts_response  # Lyd-URL'en fra TTS
+            "text": text_response,
+            "audio_url": tts_response
         })
 
         ch.basic_publish(
@@ -118,8 +159,6 @@ def on_message_callback(ch, method, properties, body):
             properties=pika.BasicProperties(correlation_id=properties.correlation_id),
             body=reply_message
         )
-
-        # Anerkend beskeden
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     except Exception as e:
@@ -127,7 +166,7 @@ def on_message_callback(ch, method, properties, body):
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 
-# Forbrug beskeder fra køen
+# Consume messages from the queue
 channel.basic_consume(queue=QUEUE_NAME, on_message_callback=on_message_callback)
 
 print("Listening for messages on RabbitMQ...")
