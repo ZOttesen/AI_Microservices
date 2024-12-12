@@ -36,6 +36,11 @@ class ChatRequest(BaseModel):
     points: int
     preferences: Preferences
 
+class EvaluateRequest(BaseModel):
+    answer: str
+    question: str
+    preferences: Preferences
+
 @app.post("/chat")
 async def chat(request: ChatRequest):
     try:
@@ -47,22 +52,41 @@ async def chat(request: ChatRequest):
 
     # Generer initiale beskeder baseret på kategori og point
     initial_messages = [
-        {"role": "system", "content": personality.get_personality() + assignment.questionnaire() + assignment.answer() + language.get_language()},
+        {"role": "system", "content": personality.get_personality() + assignment.questionnaire() + language.get_language()},
         {"role": "user", "content": request.category + str(request.points)}
     ]
 
+    # Brug den fælles funktion til API-kald
+    response_message = await call_openai_api(initial_messages)
+    return {"response": response_message}
+
+@app.post("/chat/evaluate")
+async def evaluate(request: EvaluateRequest):
+    try:
+        personality.set_personality(request.preferences.personality)
+        language.set_language(request.preferences.language)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    initial_messages = [
+        {"role": "system", "content": personality.get_personality() + assignment.answer() + language.get_language()},
+        {"role": "assistant", "content": request.question},
+        {"role": "user", "content": request.answer}
+    ]
+
+    response_message = await call_openai_api(initial_messages)
+    print(response_message)
+    return {"evaluation": response_message}
+
+async def call_openai_api(messages: list, model: str = "gpt-4o-mini"):
     async with bulkhead_semaphore:
         try:
-            # Foretag et API-kald til OpenAI
-            chat_completion = circuit_breaker.call(
+            response = circuit_breaker.call(
                 openai.ChatCompletion.create,
-                model="gpt-4o-mini",
-                messages=initial_messages
+                model=model,
+                messages=messages
             )
-
-            response_message = chat_completion["choices"][0]["message"]["content"]
-
-            return {"response": response_message}
-
+            print(response)
+            return response["choices"][0]["message"]["content"]
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error in the API call: {e}")

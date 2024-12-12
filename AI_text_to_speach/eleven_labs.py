@@ -30,6 +30,7 @@ class TTSRequest(BaseModel):
 
 # Eleven Labs TTS Function
 def eleven_labs_tts(text, voice_id):
+    print(f"Generating TTS for: {text}")
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
     headers = {
         "Accept": "application/json",
@@ -49,6 +50,8 @@ def eleven_labs_tts(text, voice_id):
     audio_file_name = f"{hash(text)}.mp3"
     audio_file_path = os.path.join(OUTPUT_DIR, audio_file_name)
 
+    print(f"Saving audio to: {audio_file_path}")
+
     response = requests.post(tts_url, headers=headers, json=data, stream=True)
 
     if response.ok:
@@ -64,6 +67,7 @@ def eleven_labs_tts(text, voice_id):
 async def generate_tts(request: TTSRequest):
     async with bulkhead_semaphore:  # Bulkhead to limit concurrent calls
         try:
+            print(f"Generating TTS for: {request.text}")
             # Call TTS function through Circuit Breaker
             audio_path = circuit_breaker.call(eleven_labs_tts, request.text, request.voice_id)
             return {"audio_url": f"/{audio_path}"}
