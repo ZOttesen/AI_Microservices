@@ -26,7 +26,7 @@ circuit_breaker = CircuitBreaker()
 # Input model
 class TTSRequest(BaseModel):
     text: str
-    voice_id: str = "ohItIVrXTBI80RrUECOD"  # Default voice ID
+    voice_id: str = "GaRpe9UTF7hg5FPjujN7"  # Default voice ID
 
 # Eleven Labs TTS Function
 def eleven_labs_tts(text, voice_id):
